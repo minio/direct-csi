@@ -26,7 +26,7 @@ import (
 	"strings"
 )
 
-func (b *BlockDevice) probeMountInfo(major, minor uint32, driveMap map[string]*drive) ([]MountInfo, error) {
+func (b *BlockDevice) probeMountInfo(major, minor uint32, deviceMap map[string]*Device) ([]MountInfo, error) {
 	mounts, err := ProbeMountInfo()
 	if err != nil {
 		return nil, err
@@ -35,9 +35,9 @@ func (b *BlockDevice) probeMountInfo(major, minor uint32, driveMap map[string]*d
 	for _, m := range mounts {
 		if major == m.Major && minor == m.Minor {
 			if strings.HasPrefix(m.MountSource, "/dev/mapper/") {
-				for _, d := range driveMap {
-					if d.major == int(m.Major) && d.minor == int(m.Minor) {
-						m.MountSource = "/dev/" + d.name
+				for _, d := range deviceMap {
+					if d.Major == int(m.Major) && d.Minor == int(m.Minor) {
+						m.MountSource = "/dev/" + d.Name
 						break
 					}
 				}
