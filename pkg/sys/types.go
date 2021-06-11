@@ -16,6 +16,47 @@
 
 package sys
 
+type Device struct {
+	// Populated from /sys
+	Name      string
+	Major     int
+	Minor     int
+	Size      uint64
+	NGUID     string
+	Partition int
+	Removable bool
+	ReadOnly  bool
+	UUID      string
+	WWID      string
+	Model     string
+	Serial    string
+	Vendor    string
+	DMName    string
+	DMUUID    string
+	MDUUID    string
+	Virtual   bool
+	Parent    string
+	Master    string
+
+	// Populated by reading device
+	PTUUID            string
+	PTType            string
+	PARTUUID          string
+	FSUUID            string
+	FSType            string
+	TotalCapacity     int64
+	FreeCapacity      int64
+	LogicalBlockSize  int64
+	PhysicalBlockSize int64
+
+	// Populated from /proc/1/mountinfo
+	MountPoints       []string
+	FirstMountPoint   string
+	FirstMountOptions []string
+	Error             string
+	Path              string
+}
+
 type MasterInfo struct {
 	DMName string `json:"dmName,omitempty"`
 	DMUUID string `json:"dmUUID,omitempty"`
