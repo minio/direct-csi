@@ -17,18 +17,29 @@
 package main
 
 import (
+	"context"
 	jsonFormatter "encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/fatih/color"
 
 	directcsi "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta2"
+	"github.com/minio/direct-csi/pkg/converter"
 	"github.com/minio/direct-csi/pkg/utils"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	runtime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/version"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/klog/v2"
 	yamlFormatter "sigs.k8s.io/yaml"
 )
+
+type migrateFunc func(ctx context.Context, fromVersion string) error
 
 // pretty printing utils
 const dot = "•"
@@ -90,5 +101,173 @@ func printJSON(obj interface{}) error {
 		return err
 	}
 	fmt.Println(string(formattedObj))
+	return nil
+}
+
+func syncCRDObjects(ctx context.Context) error {
+	crdClient := utils.GetCRDClient()
+
+	supportedCRDs := []string{
+		driveCRDName,
+		volumeCRDName,
+	}
+	for _, crdName := range supportedCRDs {
+		crd, err := crdClient.Get(ctx, crdName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		v := crd.GetLabels()[directcsi.Group+"/version"]
+		if v == string(directcsi.Version) {
+			// already upgraded to latest
+			continue
+		}
+
+		if err := syncObjects(ctx, crd); err != nil {
+			return err
+		}
+
+		SetCRDLabelKV(crd, directcsi.Group+"/version", directcsi.Version)
+		if _, err := crdClient.Update(ctx, crd, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncObjects(ctx context.Context, crd *apiextensions.CustomResourceDefinition) error {
+	storedVersions := crd.Status.StoredVersions
+	if len(storedVersions) == 0 {
+		// No objects stored
+		return nil
+	}
+
+	if len(storedVersions) == 1 && storedVersions[0] == string(directcsi.Version) {
+		// already latest
+		return nil
+	}
+
+	fromVersion := func() string {
+		possibleVersions := []string{}
+		for _, v := range storedVersions {
+			if v == string(directcsi.Version) {
+				continue
+			}
+			possibleVersions = append(possibleVersions, v)
+		}
+		sort.SliceStable(possibleVersions, func(i, j int) bool {
+			return version.CompareKubeAwareVersionStrings(possibleVersions[i], possibleVersions[j]) > 0
+		})
+		return possibleVersions[0]
+	}()
+
+	migrateFn := func() migrateFunc {
+		switch crd.Name {
+		case driveCRDName:
+			return migrateDriveObjects
+		case volumeCRDName:
+			return migrateVolumeObjects
+		default:
+			fn := func(_ context.Context, _ string) error {
+				return fmt.Errorf("Unsupported crd: %v", crd.Name)
+			}
+			return fn
+		}
+	}()
+	if err := migrateFn(ctx, fromVersion); err != nil {
+		return err
+	}
+
+	klog.Infof("'%s' objects successfully synced", utils.Bold(crd.Name))
+	return nil
+}
+
+func toUnstructured(obj interface{}) (unstructured.Unstructured, error) {
+	unstructured := unstructured.Unstructured{}
+	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+	if err != nil {
+		return unstructured, err
+	}
+	unstructured.Object = unstructuredObj
+	return unstructured, nil
+}
+
+func migrateDriveObjects(ctx context.Context, fromVersion string) error {
+	driveClient := utils.GetDirectCSIClient().DirectCSIDrives()
+	var unstructuredList []unstructured.Unstructured
+	driveList, err := driveClient.List(ctx, metav1.ListOptions{
+		TypeMeta: utils.DirectCSIDriveTypeMeta(strings.Join([]string{directcsi.Group, directcsi.Version}, "/")),
+	})
+	if err != nil {
+		klog.V(3).Infof("Error while syncing CRD versions in directcsidrives: %v", err)
+		return err
+	}
+	drives := driveList.Items
+	for _, d := range drives {
+		unstructured, err := toUnstructured(&d)
+		if err != nil {
+			return err
+		}
+		unstructuredList = append(unstructuredList, unstructured)
+	}
+
+	for _, unstructured := range unstructuredList {
+		unstructured.SetAPIVersion(strings.Join([]string{directcsi.Group, fromVersion}, "/"))
+		if err := converter.Migrate(&unstructured, strings.Join([]string{directcsi.Group, directcsi.Version}, "/")); err != nil {
+			klog.V(4).Infof("Error while syncing directcsidrive [%v]: %v", unstructured.GetName(), err)
+			continue
+		}
+		var directCSIDrive directcsi.DirectCSIDrive
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured.Object, &directCSIDrive); err != nil {
+			klog.V(4).Infof("Error while syncing directcsidrive [%v]: %v", unstructured.GetName(), err)
+			continue
+		}
+		updateOpts := metav1.UpdateOptions{
+			TypeMeta: utils.DirectCSIDriveTypeMeta(strings.Join([]string{directcsi.Group, directcsi.Version}, "/")),
+		}
+		if _, err := driveClient.Update(ctx, &directCSIDrive, updateOpts); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateVolumeObjects(ctx context.Context, fromVersion string) error {
+	volumeClient := utils.GetDirectCSIClient().DirectCSIVolumes()
+	var unstructuredList []unstructured.Unstructured
+	volumeList, err := volumeClient.List(ctx, metav1.ListOptions{
+		TypeMeta: utils.DirectCSIDriveTypeMeta(strings.Join([]string{directcsi.Group, directcsi.Version}, "/")),
+	})
+	if err != nil {
+		klog.V(3).Infof("Error while syncing CRD versions in directcsivolumes: %v", err)
+		return err
+	}
+	volumes := volumeList.Items
+	for _, v := range volumes {
+		unstructured, err := toUnstructured(&v)
+		if err != nil {
+			return err
+		}
+		unstructuredList = append(unstructuredList, unstructured)
+	}
+
+	for _, unstructured := range unstructuredList {
+		unstructured.SetAPIVersion(strings.Join([]string{directcsi.Group, fromVersion}, "/"))
+		if err := converter.Migrate(&unstructured, strings.Join([]string{directcsi.Group, directcsi.Version}, "/")); err != nil {
+			klog.V(4).Infof("Error while syncing directcsivolume [%v]: %v", unstructured.GetName(), err)
+			continue
+		}
+		var directCSIVolume directcsi.DirectCSIVolume
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured.Object, &directCSIVolume); err != nil {
+			klog.V(4).Infof("Error while syncing directcsivolume [%v]: %v", unstructured.GetName(), err)
+			continue
+		}
+		updateOpts := metav1.UpdateOptions{
+			TypeMeta: utils.DirectCSIVolumeTypeMeta(strings.Join([]string{directcsi.Group, directcsi.Version}, "/")),
+		}
+		if _, err := volumeClient.Update(ctx, &directCSIVolume, updateOpts); err != nil {
+			return err
+		}
+	}
 	return nil
 }

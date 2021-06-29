@@ -17,8 +17,7 @@
 package converter
 
 import (
-	"fmt"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	directv1alpha1 "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1alpha1"
 	directv1beta1 "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta1"
@@ -62,8 +61,7 @@ func volumeDowngradeV1Beta1ToV1alpha1(unstructured *unstructured.Unstructured) e
 		return err
 	}
 
-	fmt.Println()
-	fmt.Printf("Converting %v to v1alpha1", v1beta1DirectCSIVolume.Name)
+	klog.V(4).Infof("Converting directcsivolume: %v to v1alpha1", v1beta1DirectCSIVolume.Name)
 
 	var v1alpha1DirectCSIVolume directv1alpha1.DirectCSIVolume
 	if err := directv1beta1.Convert_v1beta1_DirectCSIVolume_To_v1alpha1_DirectCSIVolume(&v1beta1DirectCSIVolume, &v1alpha1DirectCSIVolume, nil); err != nil {
@@ -89,8 +87,7 @@ func volumeDowngradeV1Beta2ToV1Beta1(unstructured *unstructured.Unstructured) er
 		return err
 	}
 
-	fmt.Println()
-	fmt.Printf("Converting %v to v1beta1", v1beta2DirectCSIVolume.Name)
+	klog.V(4).Infof("Converting directcsivolume: %v to v1beta1", v1beta2DirectCSIVolume.Name)
 
 	var v1beta1DirectCSIVolume directv1beta1.DirectCSIVolume
 	if err := directv1beta2.Convert_v1beta2_DirectCSIVolume_To_v1beta1_DirectCSIVolume(&v1beta2DirectCSIVolume, &v1beta1DirectCSIVolume, nil); err != nil {
