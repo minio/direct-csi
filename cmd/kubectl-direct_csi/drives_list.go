@@ -27,6 +27,7 @@ import (
 	"github.com/minio/direct-csi/pkg/sys"
 	"github.com/minio/direct-csi/pkg/utils"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/dustin/go-humanize"
@@ -62,6 +63,12 @@ $ kubectl direct-csi drives drives ls --access-tier="hot"
 
 # Filter all drives with access-tier being set
 $ kubectl direct-csi drives drives ls --access-tier="*"
+
+# Filter a drive by it's drive-id [drive-id will be displayed with '-o wide' set on the command]
+$ kubectl direct-csi drives ls <drive_id>
+
+# Filter more than one drive by their drive-ids [drive-id will be displayed with '-o wide' set on the command]
+$ kubectl direct-csi drives ls <drive_id_1> <drive_id_2>
 `,
 	RunE: func(c *cobra.Command, args []string) error {
 		return listDrives(c.Context(), args)
@@ -92,54 +99,66 @@ func init() {
 func listDrives(ctx context.Context, args []string) error {
 	utils.Init()
 
-	directClient := utils.GetDirectCSIClient()
-	driveList, err := directClient.DirectCSIDrives().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	if len(driveList.Items) == 0 {
-		klog.Errorf("No resource of %s found\n", bold("DirectCSIDrive"))
-		return fmt.Errorf("No resources found")
-	}
-
-	volList, err := directClient.DirectCSIVolumes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	accessTierSet, aErr := getAccessTierSet(accessTiers)
-	if aErr != nil {
-		return aErr
-	}
 	filteredDrives := []directcsi.DirectCSIDrive{}
-	for _, d := range driveList.Items {
-		if !all {
-			if d.Status.DriveStatus == directcsi.DriveStatusUnavailable || d.Status.DriveStatus == directcsi.DriveStatusUnidentified {
+	directClient := utils.GetDirectCSIClient()
+
+	if len(args) > 0 {
+		for _, driveNameArg := range args {
+			driveName := strings.TrimSpace(driveNameArg)
+			drive, err := directClient.DirectCSIDrives().Get(ctx, driveName, metav1.GetOptions{})
+			if err != nil {
+				if !errors.IsNotFound(err) {
+					return err
+				}
+				klog.Errorf("No resource of %s found by the name %s", bold("DirectCSIDrive"), driveName)
 				continue
 			}
+			filteredDrives = append(filteredDrives, *drive)
 		}
-		if d.MatchGlob(nodes, drives, status) {
-			if d.MatchAccessTier(accessTierSet) {
-				filteredDrives = append(filteredDrives, d)
+	} else {
+		driveList, err := directClient.DirectCSIDrives().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return err
+		}
+
+		if len(driveList.Items) == 0 {
+			klog.Errorf("No resource of %s found\n", bold("DirectCSIDrive"))
+			return fmt.Errorf("No resources found")
+		}
+
+		accessTierSet, aErr := getAccessTierSet(accessTiers)
+		if aErr != nil {
+			return aErr
+		}
+
+		for _, d := range driveList.Items {
+			if !all {
+				if d.Status.DriveStatus == directcsi.DriveStatusUnavailable || d.Status.DriveStatus == directcsi.DriveStatusUnidentified {
+					continue
+				}
+			}
+			if d.MatchGlob(nodes, drives, status) {
+				if d.MatchAccessTier(accessTierSet) {
+					filteredDrives = append(filteredDrives, d)
+				}
 			}
 		}
+
+		sort.SliceStable(filteredDrives, func(i, j int) bool {
+			d1 := filteredDrives[i]
+			d2 := filteredDrives[j]
+
+			if v := strings.Compare(d1.Status.NodeName, d2.Status.NodeName); v != 0 {
+				return v < 0
+			}
+
+			if v := strings.Compare(d1.Status.Path, d2.Status.Path); v != 0 {
+				return v < 0
+			}
+
+			return strings.Compare(string(d1.Status.DriveStatus), string(d2.Status.DriveStatus)) < 0
+		})
 	}
-
-	sort.SliceStable(filteredDrives, func(i, j int) bool {
-		d1 := filteredDrives[i]
-		d2 := filteredDrives[j]
-
-		if v := strings.Compare(d1.Status.NodeName, d2.Status.NodeName); v != 0 {
-			return v < 0
-		}
-
-		if v := strings.Compare(d1.Status.Path, d2.Status.Path); v != 0 {
-			return v < 0
-		}
-
-		return strings.Compare(string(d1.Status.DriveStatus), string(d2.Status.DriveStatus)) < 0
-	})
 
 	wrappedDriveList := directcsi.DirectCSIDriveList{
 		TypeMeta: metav1.TypeMeta{
@@ -195,6 +214,11 @@ func listDrives(ctx context.Context, args []string) error {
 		dr := strings.ReplaceAll(val, sys.DirectCSIDevRoot+"/", "")
 		dr = strings.ReplaceAll(dr, sys.HostDevRoot+"/", "")
 		return strings.ReplaceAll(dr, directCSIPartitionInfix, "")
+	}
+
+	volList, err := directClient.DirectCSIVolumes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
 	}
 
 	for _, d := range filteredDrives {
