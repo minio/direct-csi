@@ -20,7 +20,6 @@ import (
 	"context"
 	jsonFormatter "encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/fatih/color"
@@ -31,7 +30,6 @@ import (
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/version"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -147,19 +145,11 @@ func syncObjects(ctx context.Context, crd *apiextensions.CustomResourceDefinitio
 		return nil
 	}
 
-	fromVersion := func() string {
-		possibleVersions := []string{}
-		for _, v := range storedVersions {
-			if v == string(directcsi.Version) {
-				continue
-			}
-			possibleVersions = append(possibleVersions, v)
-		}
-		sort.SliceStable(possibleVersions, func(i, j int) bool {
-			return version.CompareKubeAwareVersionStrings(possibleVersions[i], possibleVersions[j]) > 0
-		})
-		return possibleVersions[0]
-	}()
+	info, err := utils.GetGroupKindVersions(directcsi.Group, crd.Spec.Names.Kind, "v1beta1", "v1alpha1")
+	if err != nil {
+		return err
+	}
+	fromVersion := info.Version
 
 	migrateFn := func() migrateFunc {
 		switch crd.Name {
