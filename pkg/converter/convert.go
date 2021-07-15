@@ -62,6 +62,7 @@ func Migrate(convertedObject *unstructured.Unstructured, toVersion string) error
 	if err := migrateFn(fromVersion, toVersion, convertedObject); err != nil {
 		return err
 	}
+	convertedObject.SetAPIVersion(toVersion)
 
 	labels := convertedObject.GetLabels()
 	if labels == nil {

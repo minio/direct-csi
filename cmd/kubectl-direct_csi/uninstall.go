@@ -183,27 +183,25 @@ func uninstall(ctx context.Context, args []string) error {
 	}
 	klog.Infof("'%s' controller deployment deleted", utils.Bold(identity))
 
-	if uninstallCRD {
-		if err := installer.DeleteConversionDeployment(ctx, identity); err != nil {
-			if !errors.IsNotFound(err) {
-				return err
-			}
+	if err := installer.DeleteConversionDeployment(ctx, identity); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
 		}
-
-		if err := installer.DeleteConversionSecret(ctx, identity); err != nil {
-			if !errors.IsNotFound(err) {
-				return err
-			}
-		}
-
-		if err := installer.DeleteConversionWebhookCertsSecret(ctx, identity); err != nil {
-			if !errors.IsNotFound(err) {
-				return err
-			}
-		}
-
-		klog.Infof("'%s' conversion deployment deleted", utils.Bold(identity))
 	}
+
+	if err := installer.DeleteConversionSecret(ctx, identity); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	if err := installer.DeleteConversionWebhookCertsSecret(ctx, identity); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	klog.Infof("'%s' conversion deployment deleted", utils.Bold(identity))
 
 	return nil
 }

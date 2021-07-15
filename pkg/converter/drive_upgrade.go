@@ -17,8 +17,7 @@
 package converter
 
 import (
-	"fmt"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	directv1alpha1 "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1alpha1"
 	directv1beta1 "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta1"
@@ -63,8 +62,7 @@ func driveUpgradeV1alpha1ToV1Beta1(unstructured *unstructured.Unstructured) erro
 		return err
 	}
 
-	fmt.Println()
-	fmt.Printf("Converting %v to v1beta1", v1alpha1DirectCSIDrive.Name)
+	klog.V(4).Infof("Converting directcsidrive: %v to v1beta1", v1alpha1DirectCSIDrive.Name)
 
 	var v1beta1DirectCSIDrive directv1beta1.DirectCSIDrive
 	if err := directv1beta1.Convert_v1alpha1_DirectCSIDrive_To_v1beta1_DirectCSIDrive(&v1alpha1DirectCSIDrive, &v1beta1DirectCSIDrive, nil); err != nil {
@@ -92,8 +90,7 @@ func driveUpgradeV1Beta1ToV1Beta2(unstructured *unstructured.Unstructured) error
 		return err
 	}
 
-	fmt.Println()
-	fmt.Printf("Converting %v to v1beta2", v1beta1DirectCSIDrive.Name)
+	klog.V(4).Infof("Converting directcsidrive: %v to v1beta2", v1beta1DirectCSIDrive.Name)
 
 	var v1beta2DirectCSIDrive directv1beta2.DirectCSIDrive
 	if err := directv1beta2.Convert_v1beta1_DirectCSIDrive_To_v1beta2_DirectCSIDrive(&v1beta1DirectCSIDrive, &v1beta2DirectCSIDrive, nil); err != nil {
